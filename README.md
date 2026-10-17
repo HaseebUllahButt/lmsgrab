@@ -9,17 +9,31 @@ can tell your AI agent to run it for you.
 
 ## Install (one line)
 
-On Mac or Linux:
+On Mac or Linux, in a terminal:
 
 ```
 curl -fsSL https://raw.githubusercontent.com/HaseebUllahButt/lmsgrab/main/install.sh | sh
 ```
 
-That gives you an `lms` command. No pip, nothing else to install — just Python 3
-(which Mac and most Linux already have).
+On Windows, in PowerShell:
 
-On Windows, use it inside WSL or Git Bash with the same line, or run it straight
-with Python: `python -m lmsgrab ...` from a copy of this folder.
+```
+irm https://raw.githubusercontent.com/HaseebUllahButt/lmsgrab/main/install.ps1 | iex
+```
+
+That gives you an `lms` command. No pip, nothing else to install — just Python 3
+(Mac and most Linux already have it; on Windows the installer offers to get it).
+
+Right after installing, it walks you through three quick steps:
+
+1. **Pick your AI apps.** It lists the ones on your computer (Claude Code,
+   Codex, OpenCode, Claude Desktop, Gemini CLI, Cursor, Windsurf). All are
+   picked; press Enter, or type just the numbers you want.
+2. **Log in.** Your LMS username and password, same as the website.
+3. **Pick one to open.** Claude Code, Codex and OpenCode come first. It opens
+   already knowing what to do: it lists your courses and asks what you want.
+
+You can run these steps again any time with `lms start`.
 
 ## Log in once
 
@@ -58,14 +72,10 @@ Run:
 lms start
 ```
 
-It shows a little menu of the AI agents on your computer (Claude Desktop,
-Claude Code, opencode, Cursor, Windsurf…), connects the one you pick, and
-opens it. The agent then asks for your LMS login and you just talk to it:
+It connects the LMS tool to your AI apps, logs you in, and opens the one you
+pick. Then you just talk to it:
 *"download my new lectures"*, *"what's new in Algorithms?"*,
 *"submit report.pdf to Assignment 01"*.
-
-(If you ran the one-line installer in a terminal, it offers to do this for
-you right away.)
 
 To connect agents without opening one, use `lms setup-agent`.
 

@@ -143,7 +143,7 @@ class InstallationTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         config = json.loads((self.home / ".cursor/mcp.json").read_text())
         runner = config["mcpServers"]["lms"]["args"][0]
-        self.assertEqual(runner, str(self.home / ".local/share/lmsgrab/lmsgrab/run_mcp.py"))
+        self.assertEqual(Path(runner).resolve(), (self.home / ".local/share/lmsgrab/lmsgrab/run_mcp.py").resolve())
         result = subprocess.run([str(self.home / ".local/bin/lms"), "--help"],
                                 cwd=self.home, capture_output=True, text=True)
         self.assertEqual(result.returncode, 0, result.stderr)

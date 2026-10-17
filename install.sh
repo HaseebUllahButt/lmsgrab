@@ -75,8 +75,23 @@ case ":$PATH:" in
     ;;
 esac
 
+LMS="$BINDIR/lms"
+
+# If we have a real terminal, offer to set up an agent right now.
+if [ -r /dev/tty ]; then
+  say ""
+  printf 'Set up an AI agent now so you can just chat with it? [Y/n] ' > /dev/tty
+  ans="$(head -n1 < /dev/tty)"
+  case "$ans" in
+    n|N|no|NO) ;;
+    *) "$LMS" start < /dev/tty || true; exit 0 ;;
+  esac
+fi
+
 say ""
-say "Next steps:"
+say "All set. To begin:"
+say "  lms start          # pick your AI agent and open it (it asks for your login)"
+say ""
+say "Or use it directly, no agent needed:"
 say "  lms login          # log in once"
 say "  lms download       # grab your lectures, sorted"
-say "  lms setup-agent    # (optional) let your AI agent run it"

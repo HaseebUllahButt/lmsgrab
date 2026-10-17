@@ -50,18 +50,24 @@ What it does when downloading:
   them instead of downloading again,
 - puts the finished set in one **LMS** folder in your Downloads.
 
-## Use it through your AI agent (optional)
+## Easiest: chat with your AI agent
 
-If you have an AI agent (Claude Desktop, Claude Code, opencode, Cursor,
-Windsurf…), connect it once:
+Run:
 
 ```
-lms setup-agent
+lms start
 ```
 
-Then fully restart the agent and just ask it, for example:
-*"list my courses"*, *"download my new lectures"*, or
-*"submit report.pdf to Assignment 01 in Algorithms"*.
+It shows a little menu of the AI agents on your computer (Claude Desktop,
+Claude Code, opencode, Cursor, Windsurf…), connects the one you pick, and
+opens it. The agent then asks for your LMS login and you just talk to it:
+*"download my new lectures"*, *"what's new in Algorithms?"*,
+*"submit report.pdf to Assignment 01"*.
+
+(If you ran the one-line installer in a terminal, it offers to do this for
+you right away.)
+
+To connect agents without opening one, use `lms setup-agent`.
 
 ### How files are sorted
 

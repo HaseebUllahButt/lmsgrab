@@ -186,6 +186,60 @@ def cmd_new(args):
     _download(args, only_new=True)
 
 
+def _tty_input(prompt):
+    """Read a line from the real keyboard, even if stdin is a pipe
+    (so this works right after a `curl | sh` install)."""
+    try:
+        with open("/dev/tty") as tty:
+            sys.stdout.write(prompt)
+            sys.stdout.flush()
+            return tty.readline().strip()
+    except OSError:
+        try:
+            return input(prompt)
+        except EOFError:
+            return ""
+
+
+def cmd_start(args):
+    from . import agents
+    all_ = agents.detect()
+    present = [a for a in all_ if a["present"]]
+    menu = present or all_
+    note = "" if present else " (none detected — pick the one you use)"
+
+    print("Which AI agent do you want to use with your LMS?" + note + "\n")
+    for i, a in enumerate(menu, 1):
+        tag = "" if a["present"] else "  (not detected)"
+        print(f"  {i}) {a['label']}{tag}")
+    print(f"  0) Skip — I'll just use the 'lms' commands myself\n")
+
+    choice = _tty_input("Enter a number: ").strip()
+    if choice in ("", "0"):
+        print("\nNo problem. Run 'lms login' then 'lms download' whenever you like.")
+        return
+    try:
+        agent = menu[int(choice) - 1]
+    except (ValueError, IndexError):
+        sys.exit("That wasn't one of the choices. Run 'lms start' again.")
+
+    print(f"\nSetting up {agent['label']}...")
+    print("  " + agents.wire(agent))
+
+    if agent["kind"] == "gui":
+        agents.copy_to_clipboard(agents.STARTER_PROMPT)
+        print("\nOpening the app. Fully quit and reopen it if it was already running.")
+        print("Then start a new chat and paste this (already copied for you):\n")
+        print("  " + agents.STARTER_PROMPT + "\n")
+        if not agent["open"]():
+            print("(Couldn't open it automatically — just open it yourself.)")
+    else:
+        print("\nOpening your agent now. It'll ask for your LMS login, then you're set.\n")
+        if not agent["open"]():
+            print("Couldn't launch it automatically. Open it yourself and say:")
+            print("  " + agents.STARTER_PROMPT)
+
+
 def cmd_setup_agent(args):
     from . import agents
     print("Connecting the LMS tool to your AI agent(s)...\n")
@@ -259,6 +313,9 @@ def main(argv=None):
                        help="move your existing files in instead of copying them")
         s.add_argument("--force", action="store_true", help="re-download even if already there")
         s.set_defaults(func=fn)
+
+    sub.add_parser("start", help="pick an AI agent, connect it, and open it"
+                   ).set_defaults(func=cmd_start)
 
     s = sub.add_parser("setup-agent", help="connect this tool to your AI agent(s)")
     s.add_argument("--all", action="store_true",

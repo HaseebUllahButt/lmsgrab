@@ -17,8 +17,40 @@ from .client import MoodleClient, LMSError
 PROTOCOL = "2025-06-18"  # fallback; we echo whatever the client asks for
 
 
+DEFAULT_URL = os.environ.get("LMS_URL", "https://lms.nust.edu.pk")
+
+INSTRUCTIONS = (
+    "This server connects to the student's university LMS (Moodle). "
+    "When the conversation starts, call `whoami` first. If it says not logged in, "
+    "ask the student for their LMS username and password, then call `login`. "
+    "Once logged in, tell them you can: list courses, download their lectures "
+    "sorted into folders, fetch only what's new, and submit assignments — and ask "
+    "what they'd like. Keep replies short and in plain language."
+)
+
 # ---- the tools the agent can use -----------------------------------------
 TOOLS = [
+    {
+        "name": "whoami",
+        "description": "Check whether the student is logged in. Call this first.",
+        "inputSchema": {"type": "object", "properties": {}},
+    },
+    {
+        "name": "login",
+        "description": ("Log in to the LMS with the student's username and password. "
+                        "Ask them for these; the password is used once to get an access "
+                        "key and is not stored."),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "username": {"type": "string"},
+                "password": {"type": "string"},
+                "url": {"type": "string",
+                        "description": f"LMS web address. Optional; defaults to {DEFAULT_URL}."},
+            },
+            "required": ["username", "password"],
+        },
+    },
     {
         "name": "list_courses",
         "description": "List the courses the student is enrolled in on the LMS.",
@@ -81,6 +113,24 @@ def _match_course(courses, wanted):
 
 
 # ---- tool implementations -------------------------------------------------
+def tool_whoami(args):
+    cfg = state.load_config()
+    if cfg.get("token"):
+        return f"Logged in as {cfg.get('name')} ({cfg.get('url')})."
+    return "Not logged in. Ask the student for their LMS username and password, then call login."
+
+
+def tool_login(args):
+    from .client import MoodleClient
+    url = (args.get("url") or DEFAULT_URL).rstrip("/")
+    client = MoodleClient(url)
+    client.login(args["username"], args["password"])
+    info = client.site_info()
+    state.save_config({"url": url, "token": client.token,
+                       "userid": info["userid"], "name": info.get("fullname")})
+    return f"Logged in as {info.get('fullname')}. Ready to go."
+
+
 def tool_list_courses(args):
     import html as _html
     client, cfg = _client()
@@ -148,6 +198,8 @@ def tool_submit(args):
 
 
 DISPATCH = {
+    "whoami": tool_whoami,
+    "login": tool_login,
     "list_courses": tool_list_courses,
     "download_lectures": tool_download,
     "submit_assignment": tool_submit,
@@ -179,6 +231,7 @@ def handle(req):
             "protocolVersion": want,
             "capabilities": {"tools": {}},
             "serverInfo": {"name": "lmsgrab", "version": "0.1.0"},
+            "instructions": INSTRUCTIONS,
         })
     elif method in ("notifications/initialized", "initialized"):
         pass  # notification, no reply

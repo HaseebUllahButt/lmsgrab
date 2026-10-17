@@ -10,6 +10,7 @@ function Install-Lmsgrab {
   $Branch = if ($env:LMSGRAB_BRANCH) { $env:LMSGRAB_BRANCH } else { 'main' }
   $AppDir = Join-Path $env:LOCALAPPDATA 'lmsgrab'
   $BinDir = Join-Path $AppDir 'bin'
+  $Updating = Test-Path (Join-Path $AppDir 'lmsgrab')
 
   # --- need Python 3 -------------------------------------------------------
   # Ask each candidate for its real path. The fake `python` that opens the
@@ -58,16 +59,17 @@ function Install-Lmsgrab {
 
     # --- install the package ---------------------------------------------
     New-Item -ItemType Directory -Force -Path $AppDir, $BinDir | Out-Null
-    Remove-Item (Join-Path $AppDir 'lmsgrab') -Recurse -Force -ErrorAction SilentlyContinue
-    Copy-Item (Join-Path $Src.FullName 'lmsgrab') $AppDir -Recurse
+    & $Py (Join-Path $Src.FullName 'lmsgrab\update.py') $AppDir
+    if ($LASTEXITCODE -ne 0) { throw 'LMS update failed. The previous installation was kept or restored; fix the reported problem and retry.' }
   } finally {
     Remove-Item $Tmp -Recurse -Force -ErrorAction SilentlyContinue
   }
 
   # --- make the `lms` and `lms-mcp` commands -------------------------------
-  foreach ($cmd in @(@('lms', 'lmsgrab'), @('lms-mcp', 'lmsgrab.mcp_server'))) {
-    $body = "@echo off`r`nset `"PYTHONPATH=$AppDir;%PYTHONPATH%`"`r`n`"$Py`" -m $($cmd[1]) %*`r`n"
-    Set-Content -Path (Join-Path $BinDir "$($cmd[0]).cmd") -Value $body -Encoding ASCII -NoNewline
+  foreach ($cmd in @(@('lms', 'run_cli.py'), @('lms-mcp', 'run_mcp.py'))) {
+    $Runner = Join-Path (Join-Path $AppDir 'lmsgrab') $cmd[1]
+    $body = "@echo off`r`nchcp 65001 >nul`r`n`"$Py`" `"$Runner`" %*`r`n"
+    [IO.File]::WriteAllText((Join-Path $BinDir "$($cmd[0]).cmd"), $body, (New-Object Text.UTF8Encoding($false)))
   }
 
   # --- make sure that folder is on PATH (now and in new windows) -----------
@@ -82,8 +84,18 @@ function Install-Lmsgrab {
   Write-Host "Installed. The 'lms' command works in any new terminal."
   Write-Host ""
 
+  # Register even editor-only installs using this interpreter's absolute path.
+  & $Py (Join-Path $AppDir 'lmsgrab\run_cli.py') setup-agent
+  if ($LASTEXITCODE -ne 0) { throw 'LMS installed, but AI app setup failed. Run lms setup-agent to retry.' }
+  Write-Host 'Fully quit and reopen terminals and AI apps to refresh their environment.'
+
+  if ($Updating) {
+    Write-Host 'Update complete. Your saved login, download history and lectures are kept.'
+    return
+  }
+
   # --- go straight into setup: pick agents, log in, open one --------------
-  & (Join-Path $BinDir 'lms.cmd') start
+  if ($env:LMSGRAB_NO_START -ne '1') { & (Join-Path $BinDir 'lms.cmd') start }
 }
 
 Install-Lmsgrab

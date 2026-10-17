@@ -10,13 +10,15 @@ OWNER_REPO="${LMSGRAB_REPO:-HaseebUllahButt/lmsgrab}"
 BRANCH="${LMSGRAB_BRANCH:-main}"
 APPDIR="${XDG_DATA_HOME:-$HOME/.local/share}/lmsgrab"
 BINDIR="$HOME/.local/bin"
+UPDATING=0
+[ ! -d "$APPDIR/lmsgrab" ] || UPDATING=1
 
 say() { printf '%s\n' "$*"; }
 
 # --- need Python 3 ---------------------------------------------------------
 PY=""
 for c in python3 python; do
-  if command -v "$c" >/dev/null 2>&1 && "$c" -c 'import sys;exit(0 if sys.version_info[0]==3 else 1)' 2>/dev/null; then
+  if command -v "$c" >/dev/null 2>&1 && "$c" -c 'import sys;exit(0 if sys.version_info >= (3, 8) else 1)' 2>/dev/null; then
     PY="$c"; break
   fi
 done
@@ -42,44 +44,27 @@ tar -xzf "$TMP/src.tgz" -C "$TMP"
 SRC="$(find "$TMP" -maxdepth 1 -type d -name '*-*' | head -n1)"
 
 # --- install the package ---------------------------------------------------
-rm -rf "$APPDIR"
-mkdir -p "$APPDIR"
-cp -R "$SRC/lmsgrab" "$APPDIR/"
+"$PY" "$SRC/lmsgrab/update.py" "$APPDIR"
 
 # --- make the `lms` and `lms-mcp` commands --------------------------------
-mkdir -p "$BINDIR"
-make_launcher() {
-  # $1 = command name, $2 = python module
-  cat > "$BINDIR/$1" <<EOF
-#!/bin/sh
-exec "$PY" -m "$2" "\$@"
-EOF
-  chmod +x "$BINDIR/$1"
-  # the launcher needs to find the package:
-  sed -i.bak "2i export PYTHONPATH=\"$APPDIR:\${PYTHONPATH:-}\"" "$BINDIR/$1" 2>/dev/null || true
-  rm -f "$BINDIR/$1.bak"
-}
-make_launcher lms lmsgrab
-make_launcher lms-mcp lmsgrab.mcp_server
-
-say ""
-say "Installed. The 'lms' command is in: $BINDIR"
-
-# --- make sure that folder is on PATH -------------------------------------
-case ":$PATH:" in
-  *":$BINDIR:"*) ;;
-  *)
-    say ""
-    say "Add this line to your shell profile (~/.bashrc or ~/.zshrc), then open a new terminal:"
-    say "    export PATH=\"$BINDIR:\$PATH\""
-    ;;
-esac
+if ! (cd "$APPDIR" && "$PY" -m lmsgrab.install); then
+  say "Application updated, but some setup needs attention. See the errors above."
+  say "Fix the reported settings and rerun this installer; your login and downloads are kept."
+  exit 1
+fi
+export PATH="$BINDIR:$PATH"
 
 LMS="$BINDIR/lms"
 
+if [ "$UPDATING" = 1 ]; then
+  say "Update complete. Your saved login, download history and lectures are kept."
+  say "Restart your AI apps to load the updated LMS tools."
+  exit 0
+fi
+
 # If we can reach a real keyboard, go straight into setup: pick agents,
 # log in, open one. (Probe in a subshell so a missing /dev/tty can't abort.)
-if (exec </dev/tty) 2>/dev/null; then
+if [ "${LMSGRAB_NO_START:-0}" != "1" ] && (exec </dev/tty) 2>/dev/null; then
   say ""
   "$LMS" start < /dev/tty || true
   exit 0

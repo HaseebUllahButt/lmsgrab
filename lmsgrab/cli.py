@@ -13,8 +13,9 @@ import getpass
 import html
 import os
 import sys
+from urllib.error import URLError
 
-from . import engine, state
+from . import __version__, engine, state
 from .client import MoodleClient, LMSError
 
 DEFAULT_URL = "https://lms.nust.edu.pk"
@@ -24,7 +25,7 @@ DEFAULT_URL = "https://lms.nust.edu.pk"
 def _client():
     cfg = state.load_config()
     if not cfg.get("token"):
-        sys.exit("Not logged in yet. Run:  lmsgrab login")
+        sys.exit("Not logged in yet. Run:  lms login")
     return MoodleClient(cfg["url"], cfg["token"]), cfg
 
 
@@ -53,7 +54,7 @@ def cmd_login(args):
 def cmd_status(args):
     cfg = state.load_config()
     if not cfg.get("token"):
-        print("Not logged in. Run:  lmsgrab login")
+        print("Not logged in. Run:  lms login")
         return
     print(f"Logged in as {cfg.get('name')}  ({cfg['url']})")
 
@@ -73,10 +74,12 @@ class Progress:
         self.i = self.total = 0
         self.name = ""
         self.bdone = self.btot = 0
+        self.done = False
 
     def start(self, i, total, name):
         self.i, self.total, self.name = i, total, name
         self.bdone = self.btot = 0
+        self.done = False
         self._render()
 
     def bytes(self, done, total):
@@ -84,12 +87,13 @@ class Progress:
         self._render()
 
     def finish(self, status):
-        pass  # the next start() redraws; close() prints the final newline
+        self.done = True
+        self._render()
 
     def _render(self):
         if not self.enabled or not self.total:
             return
-        frac_file = (self.bdone / self.btot) if self.btot else 0.0
+        frac_file = 1.0 if self.done else ((self.bdone / self.btot) if self.btot else 0.0)
         overall = ((self.i - 1) + frac_file) / self.total
         import shutil as _sh
         cols = min(_sh.get_terminal_size((80, 20)).columns, 100)
@@ -133,13 +137,17 @@ def _ask_books(items):
 
 def _download(args, only_new):
     client, cfg = _client()
-    out = os.path.abspath(args.out or _default_out())
+    out = os.path.abspath(os.path.expanduser(args.out or _default_out()))
 
+    print("Checking your courses and files…", flush=True)
     courses = client.my_courses(cfg["userid"])
     if args.course:
         courses = [c for c in courses if str(c["id"]) == str(args.course)]
         if not courses:
-            sys.exit(f"No course with id {args.course}")
+            sys.exit(f"No course with id {args.course}. Run 'lms courses' to see available IDs.")
+    if not courses:
+        print("No enrolled courses were found for this account.")
+        return []
 
     # Decide whether to include books. If we're in a terminal and the student
     # didn't say, ask them (but only bother if there actually are books).
@@ -161,26 +169,43 @@ def _download(args, only_new):
     manifest = state.load_manifest()
     live = sys.stdout.isatty()
     bar = Progress(enabled=live)
-    res = engine.smart_download(
-        client, courses, out, include_books=include_books, only_new=only_new,
-        manifest=manifest, scan_dirs=scan_dirs, move=getattr(args, "move", False),
-        on_file=None if live else (lambda m: print(f"  {m}")),
-        progress=bar if live else None)
-    bar.close()
+    failures = []
+
+    def report(message):
+        if not live:
+            print(f"  {message}")
+        elif message.startswith("FAILED "):
+            failures.append(message)
+
+    try:
+        res = engine.smart_download(
+            client, courses, out, include_books=include_books, only_new=only_new,
+            manifest=manifest, scan_dirs=scan_dirs, move=getattr(args, "move", False),
+            on_file=report, progress=bar if live else None,
+            force=getattr(args, "force", False))
+    finally:
+        bar.close()
     state.save_manifest(res["manifest"])
 
     if res["total"] == 0:
         print("Nothing new. You're all caught up." if only_new else "Nothing to download.")
         return []
 
-    print(f'\nDone. {res["downloaded"]} downloaded, {res["reused"]} reused from your '
-          f'folders, {res["failed"]} failed.')
-    print(f'Everything is in: {res["out"]}')
+    result = "Finished with errors." if res["failed"] else "Done."
+    print(f'\n{result} {res["downloaded"]} downloaded, {res["reused"]} reused from your '
+          f'folders, {res["skipped"]} already in place, {res["failed"]} failed.')
+    for message in failures:
+        print(f"  {message}")
+    if res["files"]:
+        print(f'Files are in: {res["out"]}')
 
-    if args.zip and (res["downloaded"] or res["reused"]):
+    if args.zip and res["files"]:
         zpath = out.rstrip("/\\") + ".zip"
         engine.make_zip(out, zpath)
         print(f"Zip: {zpath}")
+    if res["failed"]:
+        print("Run the same command again to retry the failed files.")
+        sys.exit(1)
     return res["files"]
 
 
@@ -208,10 +233,12 @@ def _tty_input(prompt):
 
 
 def _pick_numbers(answer, count):
-    """Turn "1 3" or "1,3" into [0, 2], ignoring anything out of range."""
+    """Turn "1 3" or "1,3" into [0, 2]. Reject invalid selections."""
     picks = []
     for part in answer.replace(",", " ").split():
-        if part.isdigit() and 1 <= int(part) <= count and int(part) - 1 not in picks:
+        if not part.isdecimal() or not 1 <= int(part) <= count:
+            return []
+        if int(part) - 1 not in picks:
             picks.append(int(part) - 1)
     return picks
 
@@ -256,9 +283,20 @@ def cmd_start(args):
         print("I found these AI apps on your computer:\n")
         for i, a in enumerate(found, 1):
             print(f"  {i}) {a['label']}")
-        ans = _tty_input("\nAdd the LMS tool to all of them? Press Enter for all, "
-                         "or type the numbers you want (like 1 3): ")
-        picked = [found[i] for i in _pick_numbers(ans, len(found))] or found
+        while True:
+            ans = _tty_input("\nAdd the LMS tool: Enter for all, 0 to skip, "
+                             "or numbers to select (like 1 3): ").strip()
+            if not ans:
+                picked = found
+                break
+            if ans == "0":
+                picked = []
+                break
+            nums = _pick_numbers(ans, len(found))
+            if nums:
+                picked = [found[i] for i in nums]
+                break
+            print(f"Choose numbers from 1 to {len(found)}, 0 to skip, or Enter for all.")
         print()
         for a in picked:
             print("  " + agents.wire(a))
@@ -279,14 +317,15 @@ def cmd_start(args):
     for i, a in enumerate(picked, 1):
         print(f"  {i}) {a['label']}")
     print("  0) None, I'll open it myself later")
-    choice = _tty_input("\nPress Enter for 1, or type a number: ").strip() or "1"
-    if choice == "0":
-        print("\nAll set. Open your agent any time and ask it about your LMS.")
-        return
-    nums = _pick_numbers(choice, len(picked))
-    if not nums:
-        sys.exit("That wasn't one of the choices. Run 'lms start' again.")
-    agent = picked[nums[0]]
+    while True:
+        choice = _tty_input("\nPress Enter for 1, or type a number: ").strip() or "1"
+        if choice == "0":
+            print("\nAll set. Open your agent any time and ask it about your LMS.")
+            return
+        if choice.isdecimal() and 1 <= int(choice) <= len(picked):
+            agent = picked[int(choice) - 1]
+            break
+        print(f"Choose one number from 1 to {len(picked)}, or 0 to open none.")
 
     if agent["kind"] == "gui":
         agents.copy_to_clipboard(agents.STARTER_PROMPT)
@@ -306,8 +345,11 @@ def cmd_start(args):
 def cmd_setup_agent(args):
     from . import agents
     print("Connecting the LMS tool to your AI agent(s)...\n")
-    for line in agents.setup(all_agents=args.all):
+    results = agents.setup(all_agents=args.all)
+    for line in results:
         print(f"  {line}")
+    if any("couldn't connect" in line for line in results):
+        sys.exit("Some apps couldn't be connected. Fix the settings reported above, then run lms setup-agent again.")
     print("\nDone. Fully restart the agent app, then just ask it, e.g.:")
     print('   "download my new lectures"   or   "list my courses".')
     if not state.load_config().get("token"):
@@ -315,14 +357,21 @@ def cmd_setup_agent(args):
 
 
 def cmd_submit(args):
+    path = os.path.expanduser(args.file)
+    if not os.path.isfile(path):
+        sys.exit(f"File not found or not a regular file: {path}")
+    wanted = args.assignment.strip()
+    if not wanted:
+        sys.exit("Enter an assignment name or ID.")
     client, cfg = _client()
     assigns = client.call("mod_assign_get_assignments", **{"courseids[0]": args.course})
     found = []
     for course in assigns.get("courses", []):
         for a in course.get("assignments", []):
             found.append(a)
-    match = [a for a in found if str(a["id"]) == str(args.assignment)
-             or args.assignment.lower() in html.unescape(a["name"]).lower()]
+    match = [a for a in found if str(a["id"]) == wanted]
+    if not match:
+        match = [a for a in found if wanted.lower() in html.unescape(a["name"]).lower()]
     if not match:
         print("Could not find that assignment. Available in this course:")
         for a in found:
@@ -334,9 +383,6 @@ def cmd_submit(args):
             print(f'  [{a["id"]}] {html.unescape(a["name"])}')
         sys.exit(1)
     a = match[0]
-    path = args.file
-    if not os.path.exists(path):
-        sys.exit(f"File not found: {path}")
     print(f'Submitting "{os.path.basename(path)}" to: {html.unescape(a["name"])}')
     itemid = client.upload_to_draft(path)
     client.call("mod_assign_save_submission", assignmentid=a["id"],
@@ -363,8 +409,9 @@ def _setup_console():
 
 def main(argv=None):
     _setup_console()
-    p = argparse.ArgumentParser(prog="lmsgrab", description="Your LMS, made simple.")
-    sub = p.add_subparsers(dest="cmd", required=True)
+    p = argparse.ArgumentParser(prog="lms", description="Your LMS, made simple.")
+    p.add_argument("--version", action="version", version=f"lms {__version__}")
+    sub = p.add_subparsers(dest="cmd")
 
     s = sub.add_parser("login", help="save your site and login once")
     s.add_argument("--url"); s.add_argument("--user"); s.add_argument("--password")
@@ -379,14 +426,17 @@ def main(argv=None):
         s.add_argument("--out", help="folder to save into (default: a 'LMS' folder in Downloads)")
         s.add_argument("--course", help="limit to one course id")
         s.add_argument("--zip", action="store_true", help="also make a single zip file")
-        s.add_argument("--books", action="store_true", help="include textbooks without asking")
-        s.add_argument("--no-books", action="store_true", help="skip textbooks")
-        s.add_argument("--no-scan", action="store_true",
-                       help="don't look for files you already downloaded")
-        s.add_argument("--look", help="folder to check for files you already have")
+        books = s.add_mutually_exclusive_group()
+        books.add_argument("--books", action="store_true", help="include textbooks without asking")
+        books.add_argument("--no-books", action="store_true", help="skip textbooks")
+        scan = s.add_mutually_exclusive_group()
+        scan.add_argument("--no-scan", action="store_true",
+                          help="don't look for files you already downloaded")
+        scan.add_argument("--look", help="folder to check for files you already have")
         s.add_argument("--move", action="store_true",
                        help="move your existing files in instead of copying them")
-        s.add_argument("--force", action="store_true", help="re-download even if already there")
+        s.add_argument("--force", action="store_true",
+                       help="fetch fresh copies from the LMS, including unchanged files")
         s.set_defaults(func=fn)
 
     sub.add_parser("start", help="connect your AI agents, log in, and open one"
@@ -398,17 +448,26 @@ def main(argv=None):
     s.set_defaults(func=cmd_setup_agent)
 
     s = sub.add_parser("submit", help="hand in a file for an assignment")
-    s.add_argument("course", help="course id (see: lmsgrab courses)")
+    s.add_argument("course", help="course id (see: lms courses)")
     s.add_argument("assignment", help="assignment id or part of its name")
     s.add_argument("file", help="path to the file to submit")
     s.add_argument("--final", action="store_true", help="hand in for grading (not just save a draft)")
     s.set_defaults(func=cmd_submit)
 
     args = p.parse_args(argv)
+    if not args.cmd:
+        p.print_help()
+        return
     try:
         args.func(args)
     except LMSError as e:
         sys.exit(f"Error: {e}")
+    except URLError as e:
+        sys.exit(f"Could not reach the LMS: {e.reason}. Check your connection and try again.")
+    except OSError as e:
+        sys.exit(f"Could not complete the command: {e}")
+    except (KeyboardInterrupt, EOFError):
+        sys.exit("\nCancelled.")
 
 
 if __name__ == "__main__":

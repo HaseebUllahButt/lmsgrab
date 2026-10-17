@@ -168,32 +168,38 @@ def scan_existing(wanted, search_dirs, max_depth=3):
 
 
 def assemble(client, items, dest, existing=None, move=False, on_file=None,
-             progress=None):
+             progress=None, force=False, manifest=None):
     """Put every item into dest: copy from an already-downloaded copy when we
     found one, otherwise download it. Returns (downloaded, reused, failed).
 
+    Each item gets a status: have, reused, got, or failed. Known updates and
+    forced downloads bypass local copies, which may have stale contents.
     progress is an optional object with .start(i, total, name), .bytes(done,
     total) and .finish(status) methods for a live progress bar."""
     import shutil, time
     existing = existing or {}
+    manifest = manifest or {}
     total = len(items)
-    downloaded = reused = failed = skipped = 0
+    downloaded = reused = failed = 0
     for i, it in enumerate(items, 1):
         target = os.path.join(dest, it["rel"])
         os.makedirs(os.path.dirname(target), exist_ok=True)
         have = existing.get((it["filename"], it["size"]))
+        refresh = force or (it["fileurl"] in manifest
+                            and manifest[it["fileurl"]] != it["time"])
         name = os.path.basename(it["rel"])
         if progress:
             progress.start(i, total, name)
         # Resume: if we already have a complete copy here, don't fetch it again.
-        if (os.path.exists(target) and it["size"]
+        if (not refresh and os.path.exists(target) and it["size"]
                 and os.path.getsize(target) == it["size"]):
-            skipped += 1
+            it["status"] = "have"
             if progress:
                 progress.finish("have")
             continue
         try:
-            if have and os.path.exists(have) and os.path.abspath(have) != os.path.abspath(target):
+            if (not refresh and have and os.path.exists(have)
+                    and os.path.abspath(have) != os.path.abspath(target)):
                 shutil.move(have, target) if move else shutil.copy2(have, target)
                 reused += 1
                 status = "reused"
@@ -208,17 +214,20 @@ def assemble(client, items, dest, existing=None, move=False, on_file=None,
                         break
                     except Exception as e:
                         last = e
-                        time.sleep(1.5 * (attempt + 1))
+                        if attempt < 2:
+                            time.sleep(1.5 * (attempt + 1))
                 if last:
                     raise last
                 downloaded += 1
                 status = "got"
+            it["status"] = status
             if on_file:
                 on_file(f"{status}  {it['rel']}")
             if progress:
                 progress.finish(status)
         except Exception as e:
             failed += 1
+            it["status"] = "failed"
             if on_file:
                 on_file(f"FAILED  {it['rel']}: {e}")
             if progress:
@@ -233,23 +242,25 @@ if os.name == "nt":  # Windows often keeps Desktop/Documents inside OneDrive
 
 def smart_download(client, courses, out, include_books=True, only_new=False,
                    manifest=None, scan_dirs=None, move=False, on_file=None,
-                   progress=None):
+                   progress=None, force=False):
     """The whole smart flow in one call, shared by the command tool and the AI
     agent: list files, (optionally) skip books, skip unchanged, reuse files the
     student already has, download the rest, number and sort into `out`.
 
+    force bypasses history and local copies to fetch every selected file again.
     Returns a summary dict (and an updated manifest under 'manifest')."""
     manifest = dict(manifest or {})
     items = collect_items(client, courses, include_books=include_books)
-    if only_new:
+    if only_new and not force:
         items = [it for it in items if manifest.get(it["fileurl"]) != it["time"]]
     existing = {}
-    if scan_dirs is not False:
+    if scan_dirs is not False and not force:
         existing = scan_existing(items, scan_dirs or DEFAULT_SCAN)
     if items:
         os.makedirs(out, exist_ok=True)
     got, reused, failed = assemble(client, items, out, existing=existing,
-                                   move=move, on_file=on_file, progress=progress)
+                                   move=move, on_file=on_file, progress=progress,
+                                   force=force, manifest=manifest)
     # Tidy up any half-finished downloads left by an earlier interrupted run.
     for root, _, files in os.walk(out):
         for fn in files:
@@ -260,11 +271,12 @@ def smart_download(client, courses, out, include_books=True, only_new=False,
                     pass
     # Only remember files that actually made it (so a failed one retries next time).
     for it in items:
-        if os.path.exists(os.path.join(out, it["rel"])):
+        if it["status"] != "failed":
             manifest[it["fileurl"]] = it["time"]
     return {"downloaded": got, "reused": reused, "failed": failed,
+            "skipped": sum(it["status"] == "have" for it in items),
             "total": len(items), "out": out, "manifest": manifest,
-            "files": [it["rel"] for it in items]}
+            "files": [it["rel"] for it in items if it["status"] != "failed"]}
 
 
 def make_zip(src_dir, zip_path):

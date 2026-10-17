@@ -11,7 +11,7 @@ import json
 import os
 import sys
 
-from . import engine, state
+from . import __version__, engine, state
 from .client import MoodleClient, LMSError
 
 PROTOCOL = "2025-06-18"  # fallback; we echo whatever the client asks for
@@ -20,19 +20,23 @@ PROTOCOL = "2025-06-18"  # fallback; we echo whatever the client asks for
 DEFAULT_URL = os.environ.get("LMS_URL", "https://lms.nust.edu.pk")
 
 INSTRUCTIONS = (
-    "This server connects to the student's university LMS (Moodle). "
-    "When the conversation starts, call `whoami` first. If it says not logged in, "
-    "ask the student for their LMS username and password, then call `login`. "
-    "Once logged in, tell them you can: list courses, download their lectures "
-    "sorted into folders, fetch only what's new, and submit assignments — and ask "
-    "what they'd like. Keep replies short and in plain language."
+    "LMS connects to the student's university learning management system (Moodle, "
+    "including NUST LMS). Use these tools when asked about LMS, enrolled courses, "
+    "lecture slides, lab manuals, course materials, downloading all lectures or new "
+    "lectures, or submitting assignments. No project setup is needed. "
+    "For an LMS request, call whoami first. If not logged in, guide the student to "
+    "run lms login in a terminal. Reuse the saved login. For all lectures, call "
+    "download_lectures without a course filter. Use only_new=true for new material. "
+    "Report the actual output folder and any failures. Only submit work when asked; "
+    "final=true hands it in for grading. Do not introduce LMS in unrelated chats."
 )
 
 # ---- the tools the agent can use -----------------------------------------
 TOOLS = [
     {
         "name": "whoami",
-        "description": "Check whether the student is logged in. Call this first.",
+        "description": "Check the saved university LMS / Moodle login. Call first for LMS requests.",
+        "annotations": {"readOnlyHint": True},
         "inputSchema": {"type": "object", "properties": {}},
     },
     {
@@ -53,12 +57,15 @@ TOOLS = [
     },
     {
         "name": "list_courses",
-        "description": "List the courses the student is enrolled in on the LMS.",
+        "description": "List enrolled university LMS / Moodle courses with names and course IDs.",
+        "annotations": {"readOnlyHint": True},
         "inputSchema": {"type": "object", "properties": {}},
     },
     {
         "name": "download_lectures",
-        "description": ("Download course files, sorted into per-course folders "
+        "description": ("Download all my lectures, lecture slides, lab manuals and course files "
+                        "from the university LMS / Moodle. Omit course to get every enrolled course. "
+                        "Use only_new for 'get my new lectures'. Sorted into per-course folders "
                         "(Lectures / Labs / Assignments / Course Material), lectures "
                         "numbered by upload date. Reuses files the student already "
                         "has in their Downloads/Desktop/Documents. Saves into an "
@@ -117,7 +124,7 @@ def tool_whoami(args):
     cfg = state.load_config()
     if cfg.get("token"):
         return f"Logged in as {cfg.get('name')} ({cfg.get('url')})."
-    return "Not logged in. Ask the student for their LMS username and password, then call login."
+    return "Not logged in. Ask the student to run lms login in a terminal, then retry the LMS request."
 
 
 def tool_login(args):
@@ -230,7 +237,7 @@ def handle(req):
         _result(rid, {
             "protocolVersion": want,
             "capabilities": {"tools": {}},
-            "serverInfo": {"name": "lmsgrab", "version": "0.1.0"},
+            "serverInfo": {"name": "lmsgrab", "version": __version__},
             "instructions": INSTRUCTIONS,
         })
     elif method in ("notifications/initialized", "initialized"):

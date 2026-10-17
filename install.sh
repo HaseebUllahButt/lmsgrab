@@ -77,11 +77,11 @@ esac
 
 LMS="$BINDIR/lms"
 
-# If we have a real terminal, offer to set up an agent right now.
-if [ -r /dev/tty ]; then
-  say ""
-  printf 'Set up an AI agent now so you can just chat with it? [Y/n] ' > /dev/tty
-  ans="$(head -n1 < /dev/tty)"
+# If we can reach a real keyboard, offer to set up an agent right now.
+# (Probe in a subshell so a missing /dev/tty can't abort this script.)
+if (exec </dev/tty) 2>/dev/null; then
+  printf '\nSet up an AI agent now so you can just chat with it? [Y/n] ' > /dev/tty
+  ans=""; IFS= read -r ans </dev/tty || ans=""
   case "$ans" in
     n|N|no|NO) ;;
     *) "$LMS" start < /dev/tty || true; exit 0 ;;

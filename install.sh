@@ -77,20 +77,17 @@ esac
 
 LMS="$BINDIR/lms"
 
-# If we can reach a real keyboard, offer to set up an agent right now.
-# (Probe in a subshell so a missing /dev/tty can't abort this script.)
+# If we can reach a real keyboard, go straight into setup: pick agents,
+# log in, open one. (Probe in a subshell so a missing /dev/tty can't abort.)
 if (exec </dev/tty) 2>/dev/null; then
-  printf '\nSet up an AI agent now so you can just chat with it? [Y/n] ' > /dev/tty
-  ans=""; IFS= read -r ans </dev/tty || ans=""
-  case "$ans" in
-    n|N|no|NO) ;;
-    *) "$LMS" start < /dev/tty || true; exit 0 ;;
-  esac
+  say ""
+  "$LMS" start < /dev/tty || true
+  exit 0
 fi
 
 say ""
 say "All set. To begin:"
-say "  lms start          # pick your AI agent and open it (it asks for your login)"
+say "  lms start          # connect your AI agents, log in, and open one"
 say ""
 say "Or use it directly, no agent needed:"
 say "  lms login          # log in once"

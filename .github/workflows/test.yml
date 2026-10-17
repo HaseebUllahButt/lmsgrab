@@ -23,3 +23,32 @@ jobs:
           $tokens = $null
           [void][System.Management.Automation.Language.Parser]::ParseFile("$PWD/install.ps1", [ref]$tokens, [ref]$parseErrors)
           if ($parseErrors.Count) { throw ($parseErrors | Out-String) }
+      - name: Install and upgrade on Windows
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          # Supply the checked-out code as the download, then run the actual
+          # installer twice on the disposable Windows runner.
+          $fixture = Join-Path $env:RUNNER_TEMP 'lms-fixture'
+          New-Item -ItemType Directory -Force "$fixture/lmsgrab-main" | Out-Null
+          Copy-Item lmsgrab "$fixture/lmsgrab-main/" -Recurse
+          Compress-Archive "$fixture/lmsgrab-main" "$fixture/source.zip"
+          function Invoke-WebRequest {
+            param([switch]$UseBasicParsing, [Parameter(Position=0)][string]$Uri, [string]$OutFile)
+            Copy-Item "$fixture/source.zip" $OutFile
+          }
+          $env:LMSGRAB_NO_START = '1'
+          & ./install.ps1
+          $state = Join-Path $env:APPDATA 'lmsgrab'
+          New-Item -ItemType Directory -Force $state | Out-Null
+          [IO.File]::WriteAllText("$state/config.json", '{"token":"test-login"}')
+          [IO.File]::WriteAllText("$state/manifest.json", '{"lecture":123}')
+          $env:LMSGRAB_NO_START = ''
+          & ./install.ps1
+          if ((Get-Content "$state/config.json" -Raw) -ne '{"token":"test-login"}') { throw 'Login changed' }
+          if ((Get-Content "$state/manifest.json" -Raw) -ne '{"lecture":123}') { throw 'History changed' }
+          $version = & lms --version
+          if ($LASTEXITCODE -ne 0 -or $version -ne 'lms 0.2.0') { throw "Launcher failed: $version" }
+          $bin = Join-Path $env:LOCALAPPDATA 'lmsgrab/bin'
+          $entries = @(([Environment]::GetEnvironmentVariable('Path', 'User') -split ';') | Where-Object { $_ -eq $bin })
+          if ($entries.Count -ne 1) { throw 'PATH entry missing or duplicated' }

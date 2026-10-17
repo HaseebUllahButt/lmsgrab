@@ -258,6 +258,13 @@ def handle(req):
 
 
 def main():
+    # Speak plain UTF-8 with "\n" line ends on every OS (Windows would
+    # otherwise use its local code page and "\r\n").
+    for stream in (sys.stdin, sys.stdout):
+        try:
+            stream.reconfigure(encoding="utf-8", newline="\n")
+        except (AttributeError, ValueError):
+            pass
     for line in sys.stdin:
         line = line.strip()
         if not line:

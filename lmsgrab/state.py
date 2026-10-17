@@ -7,7 +7,10 @@ APP = "lmsgrab"
 
 
 def _config_dir():
-    base = os.environ.get("XDG_CONFIG_HOME") or os.path.expanduser("~/.config")
+    if os.name == "nt":
+        base = os.environ.get("APPDATA") or os.path.expanduser("~")
+    else:
+        base = os.environ.get("XDG_CONFIG_HOME") or os.path.expanduser("~/.config")
     d = os.path.join(base, APP)
     os.makedirs(d, exist_ok=True)
     return d

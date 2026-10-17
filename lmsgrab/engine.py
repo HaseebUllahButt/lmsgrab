@@ -227,6 +227,8 @@ def assemble(client, items, dest, existing=None, move=False, on_file=None,
 
 
 DEFAULT_SCAN = ["~/Downloads", "~/Desktop", "~/Documents"]
+if os.name == "nt":  # Windows often keeps Desktop/Documents inside OneDrive
+    DEFAULT_SCAN += ["~/OneDrive/Desktop", "~/OneDrive/Documents"]
 
 
 def smart_download(client, courses, out, include_books=True, only_new=False,

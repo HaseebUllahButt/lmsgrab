@@ -20,7 +20,10 @@ class LMSError(Exception):
 
 
 def _cache_dir():
-    base = os.environ.get("XDG_CACHE_HOME") or os.path.expanduser("~/.cache")
+    if os.name == "nt":
+        base = os.environ.get("LOCALAPPDATA") or os.path.expanduser("~")
+    else:
+        base = os.environ.get("XDG_CACHE_HOME") or os.path.expanduser("~/.cache")
     d = os.path.join(base, "lmsgrab")
     os.makedirs(d, exist_ok=True)
     return d
@@ -39,6 +42,27 @@ def _build_ssl_context(host):
     return ctx
 
 
+# The DER bytes for "CA Issuers" (1.3.6.1.5.5.7.48.2) inside a certificate.
+_CA_ISSUERS_OID = bytes.fromhex("06082b06010505073002")
+
+
+def _ca_issuers_url(der):
+    """Read the "CA Issuers" web address out of a raw certificate."""
+    i = der.find(_CA_ISSUERS_OID)
+    if i < 0:
+        return None
+    i += len(_CA_ISSUERS_OID)
+    if der[i] != 0x86:  # the address is stored as a URI
+        return None
+    n = der[i + 1]
+    i += 2
+    if n & 0x80:  # long length form
+        k = n & 0x7F
+        n = int.from_bytes(der[i:i + k], "big")
+        i += k
+    return der[i:i + n].decode("ascii", "replace")
+
+
 def _fetch_missing_intermediate(host, port=443):
     """The server forgets to send one certificate link. Download it from the
     address printed inside its own certificate, convert, and cache it."""
@@ -48,33 +72,15 @@ def _fetch_missing_intermediate(host, port=443):
     with socket.create_connection((host, port), timeout=30) as sock:
         with ctx.wrap_socket(sock, server_hostname=host) as ssock:
             der = ssock.getpeercert(binary_form=True)
-    # Parse the "CA Issuers" URL out of the certificate.
-    text = ssl.DER_cert_to_PEM_cert(der)
-    # Read the "CA Issuers" address out of the certificate using openssl.
-    import subprocess, tempfile
-    with tempfile.NamedTemporaryFile("w", suffix=".pem", delete=False) as f:
-        f.write(text)
-        leaf = f.name
-    try:
-        out = subprocess.run(
-            ["openssl", "x509", "-in", leaf, "-noout", "-text"],
-            capture_output=True, text=True, timeout=30,
-        ).stdout
-    finally:
-        os.unlink(leaf)
-    m = re.search(r"CA Issuers - URI:(\S+)", out)
-    if not m:
+    url = _ca_issuers_url(der)
+    if not url:
         raise LMSError("could not find the missing certificate link")
-    url = m.group(1)
     raw = urllib.request.urlopen(url, timeout=30).read()
-    # It arrives in binary (DER); convert to PEM with openssl.
-    p = subprocess.run(
-        ["openssl", "x509", "-inform", "der", "-outform", "pem"],
-        input=raw, capture_output=True, timeout=30,
-    )
-    pem = p.stdout
+    # It usually arrives in binary (DER); the checker wants text (PEM).
+    pem = raw.decode("ascii") if raw.lstrip().startswith(b"-----BEGIN") \
+        else ssl.DER_cert_to_PEM_cert(raw)
     dest = os.path.join(_cache_dir(), f"{host}.intermediate.pem")
-    with open(dest, "wb") as f:
+    with open(dest, "w") as f:
         f.write(pem)
     return dest
 

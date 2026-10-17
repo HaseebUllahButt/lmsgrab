@@ -29,19 +29,25 @@ def _client():
 
 
 # ---- commands -------------------------------------------------------------
+def _do_login(url, user, pw):
+    """Log in and save the access key. Raises LMSError on a wrong password."""
+    client = MoodleClient(url)
+    client.login(user, pw)
+    info = client.site_info()
+    state.save_config({"url": url.rstrip("/"), "token": client.token,
+                       "userid": info["userid"], "name": info.get("fullname")})
+    return info.get("fullname")
+
+
 def cmd_login(args):
     url = args.url or input(f"Site URL [{DEFAULT_URL}]: ").strip() or DEFAULT_URL
     user = args.user or input("Username: ").strip()
     pw = args.password or getpass.getpass("Password: ")
-    client = MoodleClient(url)
     try:
-        client.login(user, pw)
+        name = _do_login(url, user, pw)
     except LMSError as e:
         sys.exit(f"Login failed: {e}")
-    info = client.site_info()
-    state.save_config({"url": url.rstrip("/"), "token": client.token,
-                       "userid": info["userid"], "name": info.get("fullname")})
-    print(f"Logged in as {info.get('fullname')}. You're set.")
+    print(f"Logged in as {name}. You're set.")
 
 
 def cmd_status(args):
@@ -172,7 +178,7 @@ def _download(args, only_new):
     print(f'Everything is in: {res["out"]}')
 
     if args.zip and (res["downloaded"] or res["reused"]):
-        zpath = out.rstrip("/") + ".zip"
+        zpath = out.rstrip("/\\") + ".zip"
         engine.make_zip(out, zpath)
         print(f"Zip: {zpath}")
     return res["files"]
@@ -190,7 +196,7 @@ def _tty_input(prompt):
     """Read a line from the real keyboard, even if stdin is a pipe
     (so this works right after a `curl | sh` install)."""
     try:
-        with open("/dev/tty") as tty:
+        with open("CONIN$" if os.name == "nt" else "/dev/tty") as tty:
             sys.stdout.write(prompt)
             sys.stdout.flush()
             return tty.readline().strip()
@@ -201,40 +207,97 @@ def _tty_input(prompt):
             return ""
 
 
+def _pick_numbers(answer, count):
+    """Turn "1 3" or "1,3" into [0, 2], ignoring anything out of range."""
+    picks = []
+    for part in answer.replace(",", " ").split():
+        if part.isdigit() and 1 <= int(part) <= count and int(part) - 1 not in picks:
+            picks.append(int(part) - 1)
+    return picks
+
+
+def _ask_login():
+    """Make sure we're logged in, asking for username and password if not."""
+    cfg = state.load_config()
+    if cfg.get("token"):
+        try:
+            MoodleClient(cfg["url"], cfg["token"]).site_info()
+            print(f"You're already logged in as {cfg.get('name')}.")
+            return True
+        except LMSError:
+            pass  # saved login stopped working; ask again
+        except Exception:
+            return True  # no internet right now; keep the saved login
+    print("Log in with your LMS username and password (same as the website).")
+    print("Your password is only used once and is not saved.\n")
+    for _ in range(3):
+        user = _tty_input("LMS username: ")
+        if not user:
+            break
+        pw = getpass.getpass("LMS password: ")
+        try:
+            name = _do_login(DEFAULT_URL, user, pw)
+            print(f"\nLogged in as {name}.")
+            return True
+        except LMSError as e:
+            print(f"That didn't work ({e}). Try again.\n")
+        except Exception as e:
+            print(f"Couldn't reach the LMS ({e}). Check your internet and try again.\n")
+    print("Skipping login for now. Your agent will ask for it instead.")
+    return False
+
+
 def cmd_start(args):
     from . import agents
-    all_ = agents.detect()
-    present = [a for a in all_ if a["present"]]
-    menu = present or all_
-    note = "" if present else " (none detected — pick the one you use)"
+    found = [a for a in agents.detect() if a["present"]]
 
-    print("Which AI agent do you want to use with your LMS?" + note + "\n")
-    for i, a in enumerate(menu, 1):
-        tag = "" if a["present"] else "  (not detected)"
-        print(f"  {i}) {a['label']}{tag}")
-    print(f"  0) Skip — I'll just use the 'lms' commands myself\n")
+    # 1) Which agents get the LMS tool? All of them unless they say otherwise.
+    if found:
+        print("I found these AI apps on your computer:\n")
+        for i, a in enumerate(found, 1):
+            print(f"  {i}) {a['label']}")
+        ans = _tty_input("\nAdd the LMS tool to all of them? Press Enter for all, "
+                         "or type the numbers you want (like 1 3): ")
+        picked = [found[i] for i in _pick_numbers(ans, len(found))] or found
+        print()
+        for a in picked:
+            print("  " + agents.wire(a))
+    else:
+        picked = []
+        print("I couldn't find an AI app on this computer (like Claude Code, Codex or OpenCode).")
+        print("Install one, then run 'lms start' again. You can still use 'lms download'.")
 
-    choice = _tty_input("Enter a number: ").strip()
-    if choice in ("", "0"):
-        print("\nNo problem. Run 'lms login' then 'lms download' whenever you like.")
+    # 2) Log in to the LMS.
+    print()
+    _ask_login()
+
+    if not picked:
         return
-    try:
-        agent = menu[int(choice) - 1]
-    except (ValueError, IndexError):
-        sys.exit("That wasn't one of the choices. Run 'lms start' again.")
 
-    print(f"\nSetting up {agent['label']}...")
-    print("  " + agents.wire(agent))
+    # 3) Which one to open now?
+    print("\nWhich one do you want to open now?\n")
+    for i, a in enumerate(picked, 1):
+        print(f"  {i}) {a['label']}")
+    print("  0) None, I'll open it myself later")
+    choice = _tty_input("\nPress Enter for 1, or type a number: ").strip() or "1"
+    if choice == "0":
+        print("\nAll set. Open your agent any time and ask it about your LMS.")
+        return
+    nums = _pick_numbers(choice, len(picked))
+    if not nums:
+        sys.exit("That wasn't one of the choices. Run 'lms start' again.")
+    agent = picked[nums[0]]
 
     if agent["kind"] == "gui":
         agents.copy_to_clipboard(agents.STARTER_PROMPT)
-        print("\nOpening the app. Fully quit and reopen it if it was already running.")
+        print(f"\nOpening {agent['label']}. Fully quit and reopen it if it was already running.")
         print("Then start a new chat and paste this (already copied for you):\n")
         print("  " + agents.STARTER_PROMPT + "\n")
         if not agent["open"]():
-            print("(Couldn't open it automatically — just open it yourself.)")
+            print("(Couldn't open it automatically. Just open it yourself.)")
     else:
-        print("\nOpening your agent now. It'll ask for your LMS login, then you're set.\n")
+        print(f"\nOpening {agent['label']}. It already knows what to do, "
+              "so just answer its questions.\n")
         if not agent["open"]():
             print("Couldn't launch it automatically. Open it yourself and say:")
             print("  " + agents.STARTER_PROMPT)
@@ -287,7 +350,19 @@ def cmd_submit(args):
 
 
 # ---- entry point ----------------------------------------------------------
+def _setup_console():
+    """Windows: turn on colours/line redraws, and never crash on odd characters."""
+    if os.name == "nt":
+        os.system("")  # enables the terminal's redraw codes for the progress bar
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(errors="replace")
+        except (AttributeError, ValueError):
+            pass
+
+
 def main(argv=None):
+    _setup_console()
     p = argparse.ArgumentParser(prog="lmsgrab", description="Your LMS, made simple.")
     sub = p.add_subparsers(dest="cmd", required=True)
 
@@ -314,7 +389,7 @@ def main(argv=None):
         s.add_argument("--force", action="store_true", help="re-download even if already there")
         s.set_defaults(func=fn)
 
-    sub.add_parser("start", help="pick an AI agent, connect it, and open it"
+    sub.add_parser("start", help="connect your AI agents, log in, and open one"
                    ).set_defaults(func=cmd_start)
 
     s = sub.add_parser("setup-agent", help="connect this tool to your AI agent(s)")

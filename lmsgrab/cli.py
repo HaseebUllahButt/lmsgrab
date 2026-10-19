@@ -151,10 +151,10 @@ def _download(args, only_new):
 
     # Decide whether to include books. If we're in a terminal and the student
     # didn't say, ask them (but only bother if there actually are books).
-    include_books = True
-    if getattr(args, "no_books", False):
-        include_books = False
-    elif not getattr(args, "books", False) and sys.stdin.isatty():
+    include_books = False
+    if getattr(args, "books", False):
+        include_books = True
+    elif not getattr(args, "no_books", False) and sys.stdin.isatty():
         peek = engine.collect_items(client, courses, include_books=True)
         include_books = _ask_books(peek)
 

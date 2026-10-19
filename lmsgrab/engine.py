@@ -74,7 +74,7 @@ def download_courses(client, courses, out_dir, manifest=None, only_new=False,
     return grabbed, skipped, new_manifest
 
 
-def collect_items(client, courses, include_books=True):
+def collect_items(client, courses, include_books=False):
     """Build the full list of files to gather, with upload time and a book
     flag, and number them by upload date within each course+bucket."""
     items = []
@@ -240,7 +240,7 @@ if os.name == "nt":  # Windows often keeps Desktop/Documents inside OneDrive
     DEFAULT_SCAN += ["~/OneDrive/Desktop", "~/OneDrive/Documents"]
 
 
-def smart_download(client, courses, out, include_books=True, only_new=False,
+def smart_download(client, courses, out, include_books=False, only_new=False,
                    manifest=None, scan_dirs=None, move=False, on_file=None,
                    progress=None, force=False):
     """The whole smart flow in one call, shared by the command tool and the AI

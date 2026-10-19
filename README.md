@@ -69,7 +69,7 @@ lms download                     # download everything, sorted, into Downloads/L
 lms download --zip               # ...and also make one zip
 lms new                          # only what changed since last time
 lms download --course 1857       # just one course
-lms download --no-books          # skip the big textbooks
+lms download --books             # also grab the big textbooks
 lms download --force             # fetch fresh copies, even if already downloaded
 lms submit 1854 "Assignment 01" myfile.pdf --final
 ```
@@ -77,7 +77,8 @@ lms submit 1854 "Assignment 01" myfile.pdf --final
 What it does when downloading:
 - sorts each course into **Lectures / Labs / Assignments / Course Material**,
 - numbers lectures by upload date (`01 - …`, `02 - …`),
-- asks whether to include big textbooks,
+- leaves out big textbooks by default (in a terminal it asks first; use
+  `--books` to include them, `--no-books` to never ask),
 - notices files you already have in Downloads/Desktop/Documents and reuses
   them instead of downloading again,
 - puts the finished set in one **LMS** folder in your Downloads.

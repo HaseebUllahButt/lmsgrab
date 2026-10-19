@@ -69,14 +69,16 @@ TOOLS = [
                         "(Lectures / Labs / Assignments / Course Material), lectures "
                         "numbered by upload date. Reuses files the student already "
                         "has in their Downloads/Desktop/Documents. Saves into an "
-                        "'LMS' folder in Downloads by default."),
+                        "'LMS' folder in Downloads by default. Big textbooks and "
+                        "references are skipped unless include_books is true."),
         "inputSchema": {
             "type": "object",
             "properties": {
                 "only_new": {"type": "boolean",
                              "description": "Only fetch what changed since last time. Default false."},
                 "include_books": {"type": "boolean",
-                                  "description": "Include large textbooks/references. Default true."},
+                                  "description": ("Include large textbooks/references. Default false; "
+                                                  "only set true when the student asks for books.")},
                 "course": {"type": "string",
                            "description": "Limit to one course: its id or part of its name. Optional."},
                 "out": {"type": "string", "description": "Folder to save into. Optional."},
@@ -161,7 +163,7 @@ def tool_download(args):
     manifest = state.load_manifest()
     res = engine.smart_download(
         client, courses, out,
-        include_books=args.get("include_books", True),
+        include_books=args.get("include_books", False),
         only_new=bool(args.get("only_new", False)),
         manifest=manifest)
     state.save_manifest(res["manifest"])
